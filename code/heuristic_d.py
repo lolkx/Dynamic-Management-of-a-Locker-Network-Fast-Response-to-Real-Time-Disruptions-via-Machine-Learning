@@ -3,7 +3,7 @@ heuristic_d.py
 ---------------
 "Option D": a unified time-aware learnheuristic like heuristic_c.py, but
 built around a genuinely different mechanism than Option C's static-overflow
-penalty. §13's diagnosis (see CLAUDE.md) showed that penalising a locker for
+penalty. The earlier diagnosis showed that penalising a locker for
 being "at risk" only made the heuristic's own fallbacks cheaper, not fewer --
 because the ML signal there predicts overflow purely from static capacity
 features, with arrival_hour a minor contributor.
@@ -44,7 +44,7 @@ import numpy as np
 from model import Solution
 from heuristic import INF, P_BIAS, N_ITER, build_graph, print_solution
 from heuristic_learn import _fallback_distances, load_model, BETA_DEFAULT
-from heuristic_c import br_CWS_c, ALPHA_DEFAULT
+from heuristic_c import br_CWS_c, br_CWS_c_dynamic, _group_out_edges, ALPHA_DEFAULT
 from instance_reader import MAX_COMPARTMENTS
 
 
@@ -135,7 +135,7 @@ def run_grasp_d(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
                 bundle: dict | None = None, locker_cap: dict | None = None,
                 n_iter: int = N_ITER, p_bias: float = P_BIAS,
                 alpha: float = ALPHA_DEFAULT, beta: float = BETA_DEFAULT,
-                departure_h: float = 8.0, verbose: bool = True
+                departure_h: float = 8.0, verbose: bool = True, rng=None
                 ) -> tuple[Solution, float]:
     """
     GRASP loop: build the candidate graph + hourly release-risk table once
@@ -151,6 +151,8 @@ def run_grasp_d(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
                  other capacity features; see _hourly_release_risk.
     alpha      : distance/time blend weight [0,1]; 1=pure distance, 0=pure time.
     beta       : ML release-risk penalty weight [0,1] (only used if bundle set).
+    rng        : optional random.Random instance, threaded to every br_CWS_c
+                 call (see heuristic.br_CWS's docstring on common random numbers).
     """
     t0 = _time.perf_counter()
 
@@ -162,7 +164,50 @@ def run_grasp_d(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
 
     for it in range(n_iter):
         sol = br_CWS_c(active_nodes, savings_list, vehicle_cap, depot,
-                       hourly_risk, d_fb, alpha, beta, departure_h, p_bias)
+                       hourly_risk, d_fb, alpha, beta, departure_h, p_bias, rng)
+        if sol.cost < best_cost:
+            best_sol  = sol
+            best_cost = sol.cost
+            if verbose:
+                print(f"    iter {it+1:>4}: new best -> "
+                      f"{best_cost/1000:.3f} km | {len(sol.routes)} routes")
+
+    return best_sol, _time.perf_counter() - t0
+
+
+def run_grasp_d_dynamic(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
+                        bundle: dict | None = None, locker_cap: dict | None = None,
+                        n_iter: int = N_ITER, p_bias: float = P_BIAS,
+                        alpha: float = ALPHA_DEFAULT, beta: float = BETA_DEFAULT,
+                        departure_h: float = 8.0, verbose: bool = True, rng=None
+                        ) -> tuple[Solution, float]:
+    """
+    GRASP loop for the DYNAMIC-PRIORITY variant of Option D: same candidate
+    graph + hourly release-risk table as run_grasp_d (one build_graph_d call),
+    but repeats heuristic_c.br_CWS_c_dynamic instead of br_CWS_c -- reusing the
+    dynamic merge core UNCHANGED, exactly as run_grasp_d reuses br_CWS_c today.
+    So the fused distance+time+release-risk saving now reorders which merges
+    are attempted rather than only vetoing them (see heuristic_c's module
+    docstring). Additive: run_grasp_d is left untouched.
+
+    Parameters mirror run_grasp_d exactly; see that function's docstring.
+    """
+    t0 = _time.perf_counter()
+
+    active_nodes, savings_list, hourly_risk, d_fb = build_graph_d(
+        nodes, dist_matrix, bundle, locker_cap)
+    depot     = nodes[0]
+    best_sol  = None
+    best_cost = INF
+
+    # Computed ONCE and reused across every GRASP iteration -- see
+    # run_grasp_c_dynamic's identical comment for why this matters.
+    out_edges = _group_out_edges(savings_list)
+
+    for it in range(n_iter):
+        sol = br_CWS_c_dynamic(active_nodes, savings_list, vehicle_cap, depot,
+                               hourly_risk, d_fb, alpha, beta, departure_h,
+                               p_bias, rng, out_edges=out_edges)
         if sol.cost < best_cost:
             best_sol  = sol
             best_cost = sol.cost

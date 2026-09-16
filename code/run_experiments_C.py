@@ -26,7 +26,7 @@ the "distancia total, tiempo total y rutas/km extra" triplet requested --
 raw distance alone doesn't show the trade-off Option C is designed to make.
 
 Run in two phases -- low-occupancy (data/instances/) first, then
-high-saturation (data/instances_B/) -- so the expected pattern is directly
+high-saturation (data/instances_real_highocc/) -- so the expected pattern is directly
 visible: on low-occupancy instances, c_time/c_full should barely differ from
 std (little/no overflow to avoid, P_j near 0); on high-saturation instances,
 c_full should show REAL fallback-km avoided vs both std and c_time.
@@ -50,7 +50,7 @@ Usage
 """
 
 from __future__ import annotations
-import os, sys, csv, time as _time, argparse, random
+import os, sys, csv, time as _time, argparse, random, zlib
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -123,23 +123,34 @@ def run_instance_C(filepath: str, bundle, phase: str, n_iter: int = N_ITER_EXP,
 
     solutions: dict[str, tuple] = {}
 
+    # Common random numbers: SAME per-instance seed re-applied (as a FRESH
+    # random.Random each time, not one shared/advancing object) before every
+    # method's GRASP loop, so std/c_time/c_full all draw the IDENTICAL
+    # sequence of biased-random u's for this instance -- isolates the
+    # algorithmic difference between methods from sampling noise (see
+    # the randomness/seeding note in the module docstring).
+    inst_seed = zlib.crc32(params.name.encode()) & 0xffffffff
+
     sol_std, t_std = run_grasp(
         nodes, dist_matrix, params.capacity,
-        n_iter=n_iter, p_bias=P_BIAS, verbose=verbose)
+        n_iter=n_iter, p_bias=P_BIAS, verbose=verbose,
+        rng=random.Random(inst_seed))
     solutions['std'] = (sol_std, t_std)
 
     sol_time, t_time = run_grasp_c(
         nodes, dist_matrix, params.capacity,
         bundle=None, locker_cap=locker_cap,
         n_iter=n_iter, p_bias=P_BIAS, alpha=alpha, beta=0.0,
-        departure_h=dep_h, verbose=verbose)
+        departure_h=dep_h, verbose=verbose,
+        rng=random.Random(inst_seed))
     solutions['c_time'] = (sol_time, t_time)
 
     sol_full, t_full = run_grasp_c(
         nodes, dist_matrix, params.capacity,
         bundle=bundle, locker_cap=locker_cap,
         n_iter=n_iter, p_bias=P_BIAS, alpha=alpha, beta=beta,
-        departure_h=dep_h, verbose=verbose)
+        departure_h=dep_h, verbose=verbose,
+        rng=random.Random(inst_seed))
     solutions['c_full'] = (sol_full, t_full)
 
     for name, (sol, t) in solutions.items():

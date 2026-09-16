@@ -119,6 +119,56 @@ class Route:
                 f"del={self.delivery_weight:.0f}kg pck={self.pickup_weight:.0f}kg)")
 
 
+def route_peak_load(route: 'Route') -> float:
+    """
+    DIAGNOSTIC ONLY -- not used by _check_merging's default feasibility test
+    (see design notes point 3). Simulates the vehicle's actual load node by
+    node -- starts with every delivery on board, subtracts each node's
+    delivery_weight on arrival, adds its pickup_weight -- and returns the
+    PEAK load observed along the route.
+
+    route.total_weight (delivery_weight + pickup_weight summed over the
+    whole route) is the conservative upper bound _check_merging actually
+    enforces: it assumes the worst case where every delivery and every
+    pickup are on board simultaneously. route_peak_load is the tighter,
+    real bound; comparing the two on a solved solution shows how much
+    slack the conservative check leaves on the table (it can only ever
+    reject merges the real load profile would have allowed, never the
+    other way around).
+    """
+    load = sum(n.delivery_weight for n in route.nodes)
+    peak = load
+    for n in route.nodes:
+        load += n.pickup_weight - n.delivery_weight
+        peak = max(peak, load)
+    return peak
+
+
+def audit_route_capacity(sol: 'Solution', vehicle_cap: float) -> list[dict]:
+    """
+    DIAGNOSTIC ONLY (see route_peak_load). For every route in a solved
+    Solution, compares the conservative static bound (route.total_weight,
+    what _check_merging actually enforces) against the real peak load
+    (route_peak_load) -- both as absolute kg and as a percentage of
+    vehicle_cap. Use this to audit how conservative the current capacity
+    check is on a given solution, without changing routing behaviour.
+    """
+    rows = []
+    for i, route in enumerate(sol.routes):
+        static_bound = route.total_weight
+        peak         = route_peak_load(route)
+        rows.append({
+            'route_idx':              i,
+            'n_stops':                len(route.nodes),
+            'static_bound_kg':        round(static_bound, 1),
+            'actual_peak_kg':         round(peak, 1),
+            'slack_kg':               round(static_bound - peak, 1),
+            'static_utilization_pct': round(100 * static_bound / vehicle_cap, 1) if vehicle_cap else 0.0,
+            'actual_utilization_pct': round(100 * peak / vehicle_cap, 1) if vehicle_cap else 0.0,
+        })
+    return rows
+
+
 # =============================================================================
 # SOLUTION  — complete assignment of nodes to vehicle routes
 # =============================================================================

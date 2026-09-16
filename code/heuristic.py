@@ -204,14 +204,23 @@ def br_CWS(active_nodes: list[Node],
            savings_list:  list[Edge],
            vehicle_cap:   float,
            depot:         Node,
-           p:             float = P_BIAS) -> Solution:
+           p:             float = P_BIAS,
+           rng=None) -> Solution:
     """
     One pass of Clarke-Wright Savings with biased-random arc selection.
 
     Index sampling via inverse-CDF of the geometric distribution: O(1).
     Removal by index (del list[i]): O(n) C-level shift, ~100x faster
     than the O(n) Python-loop approach used with random.choices + list.remove.
+
+    rng: optional random.Random instance. Defaults to the global `random`
+    module (unchanged legacy behaviour). Pass an explicit, freshly-seeded
+    random.Random per call when comparing methods head-to-head on the same
+    instance, so each one draws the SAME sequence of u's (common random
+    numbers) instead of an arbitrary slice of one shared global stream --
+    see run_experiments_C.py/run_experiments_D.py for the paired usage.
     """
+    rng = rng or random
     sol       = _build_dummy_solution(active_nodes, depot)
     local_sav = list(savings_list)
     log_p     = math.log(p)
@@ -219,7 +228,7 @@ def br_CWS(active_nodes: list[Node],
     while local_sav:
         # Sample position from geometric distribution in O(1):
         # P(i) ∝ p^i  =>  i = floor(log(U) / log(p))
-        u   = random.random()
+        u   = rng.random()
         idx = min(int(math.floor(math.log(max(u, 1e-300)) / log_p)),
                   len(local_sav) - 1)
 
@@ -248,10 +257,14 @@ def run_grasp(nodes:       list[Node],
               vehicle_cap: float,
               n_iter:      int   = N_ITER,
               p_bias:      float = P_BIAS,
-              verbose:     bool  = True
+              verbose:     bool  = True,
+              rng=None
               ) -> tuple[Solution, float]:
     """
     GRASP loop: build graph once, repeat br_CWS n_iter times.
+
+    rng: optional random.Random instance, threaded through to every br_CWS
+    call (see br_CWS's docstring on common random numbers across methods).
 
     Returns
     -------
@@ -266,7 +279,7 @@ def run_grasp(nodes:       list[Node],
     best_cost = INF
 
     for it in range(n_iter):
-        sol = br_CWS(active_nodes, savings_list, vehicle_cap, depot, p_bias)
+        sol = br_CWS(active_nodes, savings_list, vehicle_cap, depot, p_bias, rng)
         if sol.cost < best_cost:
             best_sol  = sol
             best_cost = sol.cost

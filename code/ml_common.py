@@ -1,17 +1,17 @@
 """
 ml_common.py
 ------------
-Shared ML plumbing used by train_model_C.py / train_model_D.py and by
-generate_instances_B.py's --report overflow-rate check. Relocated from
-train_model_B.py (now deleted) so neither script depends on a "Model B"
-training script that no longer exists.
+Shared ML plumbing used by train_model_C.py / train_model_D.py and as a
+standalone overflow-rate diagnostic for any instance pool (real or
+generated). Relocated from train_model_B.py (now deleted) so neither script
+depends on a "Model B" training script that no longer exists.
 """
 
 from __future__ import annotations
 
 
 # =============================================================================
-# REAL OVERFLOW LABEL (used by generate_instances_B.py --report)
+# REAL OVERFLOW LABEL (standalone bin-packing overflow diagnostic)
 # =============================================================================
 
 def saturation_label_overflow(orders: list[dict],

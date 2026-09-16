@@ -14,7 +14,7 @@ Option D's release-aware penalty:
                further, on top of already using time" (d_full vs d_time),
                and the overall effect vs the plain baseline (d_full vs std).
 
-Where Option C's diagnosis (§13, CLAUDE.md) found its ML component only
+Where Option C's diagnosis (§13, design notes) found its ML component only
 made fallbacks CHEAPER (shorter detours), not FEWER (because its label is a
 static overflow check with arrival_hour a minor contributor), Option D's
 whole premise is a genuinely different mechanism -- a locker that looks
@@ -22,7 +22,7 @@ full may have emptied out by the time the vehicle arrives, so postponing
 the visit can avoid the fallback entirely. n_fallbacks is therefore
 surfaced explicitly and prominently below, not just fallback_km/effective_km.
 
-Metrics reported per method, TWO evaluations side by side (see CLAUDE.md §15
+Metrics reported per method, TWO evaluations side by side (see design notes
 for the full discussion of why one metric alone is misleading):
 
   1. DETERMINISTIC (fallback_km/n_fallbacks/effective_km, simulator.
@@ -47,7 +47,7 @@ for the full discussion of why one metric alone is misleading):
 Plus route distance and MAKESPAN (Tmax, reusing run_experiments_C._makespan_h).
 
 Run in two phases -- low-occupancy (data/instances/) first, then
-high-saturation (data/instances_B/) -- same convention as run_experiments_C.py.
+high-saturation (data/instances_real_highocc/) -- same convention as run_experiments_C.py.
 
 Train/test split: evaluates on the TEST 20% from
 generate_labels_C.split_all_instances() -- the SAME shuffle-split (matching
@@ -100,7 +100,7 @@ N_ITER_EXP  = N_ITER
 # deterministic simulate_solution (below) never releases anything, so it
 # CANNOT credit any timing benefit -- any n_fallbacks delta there comes from
 # route-structure side effects, not from the mechanism Option D targets. See
-# CLAUDE.md §14/§15 for the full discussion of why both are reported.
+# design notes/§15 for the full discussion of why both are reported.
 STOCH_N_REPS    = 30
 STOCH_MEAN_HOUR = MEAN_HOUR_DEFAULT
 STOCH_STD_HOUR  = STD_HOUR_DEFAULT
@@ -176,29 +176,37 @@ def run_instance_D(filepath: str, bundle, phase: str, n_iter: int = N_ITER_EXP,
 
     solutions: dict[str, tuple] = {}
 
+    # Common random numbers: SAME per-instance seed re-applied (as a FRESH
+    # random.Random each time, not one shared/advancing object) before every
+    # method's GRASP loop, so std/d_time/d_full all draw the IDENTICAL
+    # sequence of biased-random u's for this instance. Without this, all
+    # three consumed from one shared global `random` stream advancing
+    # across calls, so part of the observed difference between methods
+    # could come from which candidates happened to be sampled, not just the
+    # algorithmic difference (see the randomness/seeding note in the module docstring).
+    stoch_base_seed = zlib.crc32(params.name.encode()) & 0xffffffff
+
     sol_std, t_std = run_grasp(
         nodes, dist_matrix, params.capacity,
-        n_iter=n_iter, p_bias=P_BIAS, verbose=verbose)
+        n_iter=n_iter, p_bias=P_BIAS, verbose=verbose,
+        rng=random.Random(stoch_base_seed))
     solutions['std'] = (sol_std, t_std)
 
     sol_time, t_time = run_grasp_d(
         nodes, dist_matrix, params.capacity,
         bundle=None, locker_cap=locker_cap,
         n_iter=n_iter, p_bias=P_BIAS, alpha=alpha, beta=0.0,
-        departure_h=dep_h, verbose=verbose)
+        departure_h=dep_h, verbose=verbose,
+        rng=random.Random(stoch_base_seed))
     solutions['d_time'] = (sol_time, t_time)
 
     sol_full, t_full = run_grasp_d(
         nodes, dist_matrix, params.capacity,
         bundle=bundle, locker_cap=locker_cap,
         n_iter=n_iter, p_bias=P_BIAS, alpha=alpha, beta=beta,
-        departure_h=dep_h, verbose=verbose)
+        departure_h=dep_h, verbose=verbose,
+        rng=random.Random(stoch_base_seed))
     solutions['d_full'] = (sol_full, t_full)
-
-    # Common random numbers: SAME base_seed for all 3 methods on this
-    # instance, so the stochastic evaluation compares them against the
-    # IDENTICAL sequence of random release draws (see _stochastic_kpis).
-    stoch_base_seed = zlib.crc32(params.name.encode()) & 0xffffffff
 
     for name, (sol, t) in solutions.items():
         if sol is None:

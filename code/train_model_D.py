@@ -102,14 +102,21 @@ def train_and_save_D(csv_path: str, out_path: str, model_type: str = 'rf',
 
 
 def compare_models_D(csv_path: str = DATA_PATH, out_dir: str = OUT_DIR,
-                     cv_folds: int = CV_FOLDS, verbose: bool = True) -> str | None:
+                     cv_folds: int = CV_FOLDS, verbose: bool = True,
+                     skip: tuple[str, ...] = ()) -> str | None:
     print(f"\n{'='*60}")
     print(f"  OPTION D — MODEL COMPARISON (release-aware delivered_ok label)")
     print(f"  Data: {csv_path}")
+    if skip:
+        print(f"  Skipping: {', '.join(skip)} (e.g. sklearn GBM has no tree-level"
+              f" parallelism and does not scale to multi-million-row datasets --"
+              f" XGBoost already covers the same gradient-boosting family in the"
+              f" comparison, at a fraction of the runtime)")
     print(f"{'='*60}")
 
+    model_types = [m for m in MODEL_FACTORIES if m not in skip]
     all_m, failed = {}, {}
-    for mtype in MODEL_FACTORIES:
+    for mtype in model_types:
         out_path = os.path.join(out_dir, f'saturation_D_{mtype}.pkl')
         try:
             all_m[mtype] = train_and_save_D(csv_path, out_path, mtype, cv_folds, verbose)
@@ -121,7 +128,7 @@ def compare_models_D(csv_path: str = DATA_PATH, out_dir: str = OUT_DIR,
     print(f"  {'Model':<8}  {'F1':>10}  {'ROC-AUC':>12}")
     print(f"  {'-'*34}")
     best_type, best_auc = None, -1.0
-    for mtype in MODEL_FACTORIES:
+    for mtype in model_types:
         if mtype in failed:
             print(f"  {mtype.upper():<8}  ERROR: {failed[mtype]}")
             continue
@@ -155,10 +162,14 @@ if __name__ == '__main__':
     p.add_argument('--out',     default=None)
     p.add_argument('--cv',      type=int, default=CV_FOLDS)
     p.add_argument('--compare', action='store_true')
+    p.add_argument('--skip', default='', help='Comma-separated model types to '
+                    'exclude from --compare (e.g. "gbm" -- sklearn GBM has no '
+                    'tree-level parallelism and does not scale to multi-million-row datasets)')
     args = p.parse_args()
+    skip = tuple(s for s in args.skip.split(',') if s)
 
     if args.compare or args.model is None:
-        compare_models_D(args.data, OUT_DIR, args.cv)
+        compare_models_D(args.data, OUT_DIR, args.cv, skip=skip)
     else:
         out = args.out or os.path.join(OUT_DIR, f'saturation_D_{args.model}.pkl')
         train_and_save_D(args.data, out, args.model, args.cv)

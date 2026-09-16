@@ -221,7 +221,7 @@ def _merge_routes_dynamic(inode, jnode, iRoute, jRoute, edge, sol: Solution) -> 
 # =============================================================================
 
 def br_CWS_dynamic(active_nodes, savings_list, vehicle_cap: float, depot,
-                    departure_h: float = 8.0, p: float = P_BIAS) -> Solution:
+                    departure_h: float = 8.0, p: float = P_BIAS, rng=None) -> Solution:
     """
     One BR-CWS pass with fused, recalculated acceptance: candidates are
     sampled in the same distance(-ML)-ranked, biased-random order as
@@ -229,14 +229,19 @@ def br_CWS_dynamic(active_nodes, savings_list, vehicle_cap: float, depot,
     RECALCULATED fused saving (static edge.s_raw + live congestion_delta_m,
     see module docstring point 3) is still positive using each route's real
     accumulated tail_time.
+
+    rng: optional random.Random instance (see heuristic.br_CWS's docstring
+    on common random numbers across methods). Defaults to the global
+    `random` module.
     """
+    rng = rng or random
     sol         = _build_dummy_solution_dynamic(active_nodes, depot, departure_h)
     local_sav   = list(savings_list)
     log_p       = math.log(p)
     dep_speed_ms = speed_ms(departure_h * 3600.0)
 
     while local_sav:
-        u   = random.random()
+        u   = rng.random()
         idx = min(int(math.floor(math.log(max(u, 1e-300)) / log_p)),
                   len(local_sav) - 1)
 
@@ -272,7 +277,7 @@ def run_grasp_dynamic(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
                        departure_h: float = 8.0,
                        bundle: dict | None = None, beta: float = BETA_DEFAULT,
                        locker_cap: dict | None = None, working_hours: float = 8.0,
-                       verbose: bool = True
+                       verbose: bool = True, rng=None
                        ) -> tuple[Solution, float]:
     """
     GRASP loop: build the candidate graph once (build_graph_dynamic -- plain
@@ -288,6 +293,8 @@ def run_grasp_dynamic(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
     beta       : ML saturation penalty weight [0, 1] (only used if bundle set)
     locker_cap : required to correctly score 'capacity' feature-set (Model B)
                  bundles; see heuristic_learn._saturation_probs.
+    rng        : optional random.Random instance, threaded to every br_CWS_dynamic
+                 call (see heuristic.br_CWS's docstring on common random numbers).
     """
     t0 = _time.perf_counter()
 
@@ -299,7 +306,7 @@ def run_grasp_dynamic(nodes, dist_matrix: np.ndarray, vehicle_cap: float,
 
     for it in range(n_iter):
         sol = br_CWS_dynamic(active_nodes, savings_list, vehicle_cap, depot,
-                              departure_h, p_bias)
+                              departure_h, p_bias, rng)
         if sol.cost < best_cost:
             best_sol  = sol
             best_cost = sol.cost

@@ -64,7 +64,7 @@ def load_dataset_C(csv_path: str = DATA_PATH) -> tuple[np.ndarray, np.ndarray]:
     if y.sum() == 0:
         raise RuntimeError(
             f"All {len(X)} samples have label 0 (no overflow) in {csv_path}.\n"
-            "Increase --n-high / re-check data/instances_B/ occupancy when generating labels."
+            "Increase --n-high / re-check data/instances_real_highocc/ occupancy when generating labels."
         )
     return X, y
 

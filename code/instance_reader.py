@@ -85,8 +85,8 @@ LockerCap = dict[int, dict[int, int]]
 
 # Max compartments per size, per locker (instance.h's maxA/maxB/maxC,
 # 1-indexed here to match this codebase's size convention). Shared by
-# generate_instances_B.py, simulator.py's stochastic release model, and
-# heuristic_d.py's initial_occupancy_ratio computation.
+# simulator.py's stochastic release model and heuristic_d.py's
+# initial_occupancy_ratio computation.
 MAX_COMPARTMENTS = {1: 32, 2: 29, 3: 18}
 
 

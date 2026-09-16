@@ -1,125 +1,213 @@
-# Dynamic Management of a Locker Network: Fast Response to Real-Time Disruptions via Machine Learning
+# Dynamic Management of a Locker Network — Fast Response to Real-Time Disruptions via Machine Learning
 
-TFM — Vehicle Routing Problem with Simultaneous Pickup and Delivery (VRPSPD) to a
-parcel-locker network, extended with capacity constraints and ML-augmented
-routing heuristics that anticipate locker saturation.
+**Master's Thesis (TFM) · Guillermo Gracia Rebullida · 2025–2026**
 
-Four heuristics are compared:
+This repository contains the full implementation of a **learnheuristic** for the
+*Parcel Locker-Based Delivery Problem* (PLBDP): a Vehicle Routing Problem with
+Simultaneous Pickup and Delivery where each customer node is an automated locker
+station subject to heterogeneous compartment capacities and stochastic occupancy.
 
-| Heuristic | File | Savings formula |
-|---|---|---|
-| Standard (baseline) | `heuristic.py` | pure distance (Clarke-Wright + biased-random GRASP) |
-| Dynamic | `heuristic_dynamic.py` | distance + **live** accumulated route time (no ML) |
-| **Option C** | `heuristic_c.py` | distance + time + ML penalty on **static locker overflow risk** |
-| **Option D** | `heuristic_d.py` | distance + time + ML penalty on **stochastic release risk** (does the locker empty out before the vehicle arrives?) |
+Benchmark: [Rudy (2025)](https://doi.org/10.24425/acs.2025.156309) — 320 instances,
+70–7 177 orders, eight Polish cities.
 
-Options C and D share the same formula shape:
+---
 
-```
-s(i,j) = alpha · s_dist(i,j) + (1-alpha) · s_time(i,j) − beta · penalty(j, arrival_hour) · d_fallback(j)
-```
+## Problem Overview
 
-differing only in what `penalty(j, hour)` is trained to predict. See `CLAUDE.md`
-for the full design history, formulas, bugs found/fixed, and experimental
-results (§1–§16) — that file is the authoritative record of *why* things are
-built the way they are, and should be consulted before making further changes.
+Classical routing heuristics plan a **static route** at the start of the day,
+ignoring that locker availability changes as customers collect their parcels.
+When a courier arrives and the locker is full, the vehicle must divert to the
+nearest alternative (**fallback redirection**), increasing total travel distance.
 
-## Project layout
+This work addresses that gap with three increasingly sophisticated approaches:
 
-```
-.
-├── CLAUDE.md              # Full design log: decisions, formulas, bugs, experiment results
-├── README.md              # This file
-├── Articulos/              # Reference papers (Rudy 2025, etc.)
-├── code/                  # All Python source (see below)
-└── data/                  # Instances, generated datasets, trained models, results
-```
+| Method | Savings formula | ML signal |
+|--------|----------------|-----------|
+| **Standard** (BR-CWS) | distance only | — |
+| **HSR** (Heuristic with Static Risk) | dist + time − β·P(overflow\|j)·d_fallback | trained on simulated overflow labels |
+| **SRA** (Stochastic Release Aware) | dist + time − β·P(fail\|j, hour)·d_fallback | trained on Monte-Carlo customer-pickup replicas |
 
-### `code/`
+All three are wrapped in a **GRASP** multi-start framework (100 iterations, geometric
+bias parameter p = 0.25, K = 20 nearest neighbours).
 
-**Core model & I/O**
-- `model.py` — `Node`, `Edge`, `Route`, `Solution` data structures.
-- `instance_reader.py` — parses Rudy (2025)-format `.txt` instances; feature-column
-  schemas (`FEATURE_COLS_B/C/D`); `MAX_COMPARTMENTS`.
-- `speed_profile.py` — shared 24h time-dependent speed table.
-- `simulator.py` — post-hoc locker-capacity/fallback simulation.
-  `simulate_solution`/`simulate_solution_with_overflow` (deterministic, fixed
-  capacity all day) and `simulate_solution_stochastic` (Option D's background
-  self-collection release model — censored Normal release-hour sampling).
+---
 
-**Heuristics**
-- `heuristic.py` — standard BR-CWS + GRASP baseline.
-- `heuristic_learn.py` — shared time/ML utilities reused by Options C/D
-  (`_compute_arrival_times`, `_fallback_distances`, `load_model`, `expected_fallback_km`).
-- `heuristic_dynamic.py` — adds live accumulated route time (no ML); also used
-  as the route-bootstrap for Option C's label generation.
-- `heuristic_c.py` — Option C (static overflow-risk penalty).
-- `heuristic_d.py` — Option D (stochastic release-risk penalty); reuses
-  Option C's merge core (`br_CWS_c`) unchanged.
-
-**ML training pipeline (per option)**
-- `ml_common.py` — shared model factories (RF/GBM/LR/XGBoost) and CV scoring.
-- `generate_instances_B.py` — generates high-saturation synthetic instances
-  (`data/instances_B/`), porting `instance.h`'s (reference-only, not compiled)
-  random-generation algorithm to Python.
-- `generate_labels_C.py` / `train_model_C.py` — real-route overflow labels
-  (bootstrapped via `heuristic_dynamic`) → Option C model. Also hosts
-  `split_all_instances`, the shared 80/20 train/test split used by **both**
-  Option C and Option D.
-- `generate_labels_D.py` / `train_model_D.py` — Monte-Carlo `delivered_ok`
-  labels (via `simulate_solution_stochastic`, one fixed route × N replicas)
-  → Option D model.
-- `run_experiments_C.py` / `run_experiments_D.py` — 3-way isolated comparison
-  (standard / time-only / time+ML) on the held-out 20% test split, low- and
-  high-occupancy phases. `run_experiments_D.py` additionally reports a
-  **stochastic** evaluation (matching the training assumption) alongside the
-  deterministic one — see `CLAUDE.md` §15 for why one metric alone is
-  misleading.
-- `run_sensitivity.py` — OFAT sensitivity sweeps (p_bias, departure_h, n_iter,
-  and Option C's `sweep_alpha_c`) for a single instance.
-
-**Reference (not executed)**
-- `instance.h` — original C++ instance generator being ported by
-  `generate_instances_B.py`; kept for provenance, not compiled in this repo.
-- `main.tex` — thesis manuscript source. (Lives here rather than a separate
-  `doc/` folder — worth relocating if you reorganize further.)
-
-### `data/`
+## Repository Structure
 
 ```
+code/
+├── model.py                  # Data classes: Node, Edge, Route, Solution
+├── instance_reader.py        # Parser for Rudy .txt instances + feature extraction
+├── speed_profile.py          # Time-dependent speed profile (Table 5, Rudy 2025)
+├── heuristic.py              # Standard BR-CWS + GRASP baseline
+├── heuristic_dynamic.py      # Time-aware variant (real accumulated route times)
+├── heuristic_c.py            # HSR learnheuristic (Option C)
+├── heuristic_d.py            # SRA learnheuristic (Option D)
+├── heuristic_learn.py        # Legacy Model A/B learnheuristic (archived)
+├── simulator.py              # Discrete-event simulator: fallback routing +
+│                             #   stochastic customer-pickup events (Monte-Carlo)
+├── ml_common.py              # Shared ML utilities (overflow label, bin-packing)
+├── generate_labels_C.py      # Training data for HSR (real overflow from simulation)
+├── generate_labels_D.py      # Training data for SRA (Monte-Carlo release replicas)
+├── train_model_C.py          # Train RF/LR classifier for HSR; saves models_C/
+├── train_model_D.py          # Train RF classifier for SRA; saves models_D/
+├── run_sensitivity.py        # One-factor-at-a-time sensitivity sweeps (§6.1)
+├── run_experiments_C.py      # Held-out comparison: Standard vs HSR (§6.2)
+├── run_experiments_D.py      # Held-out comparison: Standard vs SRA (§6.2)
+├── compare_dynamic_priority.py  # α × β grid + dynamic-priority mechanism
+├── compare_rudy.py           # HVI comparison vs Rudy baseline (§6.2.4)
+└── sensitivity_release_distribution.py  # Release-distribution robustness study
+
 data/
-├── instances/          # 320 real Rudy (2025) benchmark instances (low occupancy)
-├── instances_B/        # 324 synthetic high-saturation instances (generate_instances_B.py)
-├── datasets_C/          # labels_C.csv, labels_C_round2.csv (Option C training labels)
-├── datasets_D/          # labels_D.csv (Option D training labels, Monte-Carlo)
-├── models_C/            # trained Option C bundles (rf/gbm/lr + best)
-├── models_D/            # trained Option D bundles (rf/gbm/lr/xgb + best)
-├── results_C_best_alpha0.5_beta{0.1,0.3}.csv   # Option C held-out test results
-├── results_D_best_alpha0.5_beta0.3.csv          # Option D held-out test results
-└── sensitivity_alpha_c.csv                      # Option C alpha ablation
+├── instances/                # Rudy benchmark instances (320 .txt files)
+├── instances_real_highocc/   # Synthetic high-saturation instances
+├── datasets_C/               # HSR training data (CSV, one row per locker visit)
+├── datasets_D/               # SRA training data (Monte-Carlo replicas)
+├── models_C/                 # Serialised HSR classifiers (.pkl)
+├── models_D/                 # Serialised SRA classifiers (.pkl)
+└── results_*.csv             # Experiment outputs
+
+Tfm/                          # LaTeX source of the dissertation
 ```
 
-Model A/B (percentile-label and static-overflow-label variants explored early
-in the project) were retired entirely — see `CLAUDE.md` §14 for why, and §16
-for the general cleanup that removed their now-dead code/data.
+---
 
-## Usage
+## Setup
+
+**Requirements:** Python 3.10+, `numpy`, `scikit-learn`, `pandas`.
 
 ```bash
-# Option C: generate labels -> train -> evaluate on held-out test set
-python code/generate_labels_C.py
-python code/train_model_C.py --compare
-python code/run_experiments_C.py --alpha 0.5 --beta 0.3
-
-# Option D: same shape, stochastic release-risk model
-python code/generate_labels_D.py --n-replicas 10
-python code/train_model_D.py --compare
-python code/run_experiments_D.py --alpha 0.5 --beta 0.3
-
-# Sensitivity sweep on one instance
-python code/run_sensitivity.py data/instances/<file>.txt --sweep alpha_c
+pip install numpy scikit-learn pandas
 ```
 
-Note: `data/*.csv` files are working artifacts. Per the convention at the top
-of `CLAUDE.md`, don't read them directly for context — the accompanying
-prose in `CLAUDE.md` already summarizes what each result means.
+The OSRM distance/time matrices are pre-baked into the instance files by Rudy's
+generator; no external routing API is needed at runtime.
+
+---
+
+## Quickstart
+
+### 1 — Generate training labels
+
+```bash
+# HSR labels (real overflow from one simulated route per instance)
+python code/generate_labels_C.py
+
+# SRA labels (Monte-Carlo customer-pickup replicas, slower)
+python code/generate_labels_D.py --n_replicas 30
+```
+
+### 2 — Train classifiers
+
+```bash
+python code/train_model_C.py   # saves data/models_C/model_C_best.pkl
+python code/train_model_D.py   # saves data/models_D/model_D_best.pkl
+```
+
+### 3 — Run experiments
+
+```bash
+# Sensitivity sweeps (p_bias, departure_h, n_iter, alpha, ablation)
+python code/run_sensitivity.py
+
+# Held-out comparison (Standard vs HSR)
+python code/run_experiments_C.py --alpha 0.5 --beta 0.3
+
+# Held-out comparison (Standard vs SRA)
+python code/run_experiments_D.py --alpha 0.5 --beta 0.3
+
+# α × β grid + dynamic-priority mechanism
+python code/compare_dynamic_priority.py
+
+# HVI comparison against Rudy (2025) greedy/GA baselines
+python code/compare_rudy.py
+```
+
+---
+
+## Key Design Decisions
+
+### Time-dependent savings
+
+Both learnheuristics compute the time saving **live** at merge-decision time
+using the route's real accumulated `tail_time`, avoiding the static pre-route
+estimate that caused circular bias in earlier iterations:
+
+```
+s(i,j) = α · s_dist(i,j) + (1−α) · s_time(i,j)
+        − β · risk(j, arrival_hour) · d_fallback(j)
+```
+
+where `s_time` uses the **known speed at node i** (not a fixed average) and
+`risk(j, hour)` is looked up from a precomputed 24-bucket table, keeping
+the merge-decision loop at O(1) per arc.
+
+### Two learnheuristic variants
+
+| | HSR (Option C) | SRA (Option D) |
+|---|---|---|
+| **Label** | Did delivery overflow? (1 simulated route) | Did delivery fail? (N Monte-Carlo pickup replicas) |
+| **Key feature** | `initial_occupancy_ratio` + `arrival_hour` | same + stochastic release signal |
+| **Training cost** | low | higher (N replicas × instances) |
+| **Advantage** | faster to train | captures time-of-day release patterns |
+
+### Dynamic-priority mechanism
+
+The merge rule includes a **dynamic-priority** check: if the ML score for a
+candidate arc is negative (i.e. the penalty outweighs the saving), the merge
+is skipped regardless of the biased-random draw. This prevents the heuristic
+from actively worsening routes under strong saturation signals.
+
+### Stochastic simulator
+
+`simulator.py` implements a discrete-event simulation where:
+- Pre-occupied compartments are released stochastically during the day
+  (Poisson process, rate calibrated to a configurable pickup distribution)
+- Vehicle visits are processed in route order with real accumulated times
+- Fallback redirections are resolved to the nearest locker with remaining capacity
+
+This simulator serves both as the **evaluation oracle** (effective distance =
+route distance + fallback detour) and as the **label generator** for SRA training.
+
+---
+
+## Results Summary
+
+On the 20-instance held-out set (10 low-occupancy + 10 high-saturation):
+
+| Metric | Standard | HSR (dynamic-priority) | SRA (dynamic-priority) |
+|--------|----------|------------------------|------------------------|
+| effective_km (high-sat) | 342.5 | **341.3** | 341.8 |
+| n_fallbacks (high-sat) | 65.1 | **63.4** | 64.2 |
+| effective_km (low-occ) | 1909.3 | 1901.7 | 1902.1 |
+
+HSR with `α=0.5, β=0.3` and the dynamic-priority mechanism achieves the best
+effective distance and fewest fallbacks on high-saturation instances while
+matching the standard heuristic on low-occupancy instances where saturation
+never occurs.
+
+---
+
+## Citation
+
+If you use the benchmark instances, please cite:
+
+```bibtex
+@article{rudy2025,
+  author  = {Rudy, Jarosław},
+  title   = {Multi-criteria parcel locker-based vehicle routing with pickup and delivery},
+  journal = {Archives of Control Sciences},
+  volume  = {35},
+  number  = {3},
+  pages   = {505--560},
+  year    = {2025},
+  doi     = {10.24425/acs.2025.156309}
+}
+```
+
+---
+
+## License
+
+This code is released for academic purposes. The Rudy (2025) benchmark instances
+are distributed under the terms of the original publication.

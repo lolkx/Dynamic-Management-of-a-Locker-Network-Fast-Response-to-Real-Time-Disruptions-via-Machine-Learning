@@ -19,7 +19,7 @@ The model trained on this (train_model_D.py) learns
 P(delivered_ok | initial_occupancy_ratio, arrival_hour) directly -- letting
 the replicas vary the LABEL for a fixed input row, not an extra input
 feature computed differently at train vs. serve time (see simulator.py's
-module docstring and CLAUDE.md for the full rationale).
+module docstring and the module docstring for the full rationale).
 
 Train/test split: reuses generate_labels_C.split_all_instances with the
 SAME seed/default split as Option C, so both are held out against the
@@ -170,7 +170,7 @@ def main() -> None:
     elapsed = time.perf_counter() - t0
 
     if not all_rows:
-        print("No rows generated -- check that data/instances/ and/or data/instances_B/ exist.")
+        print("No rows generated -- check that data/instances/ and/or data/instances_real_highocc/ exist.")
         return
 
     n_ok = sum(r['delivered_ok'] for r in all_rows)
